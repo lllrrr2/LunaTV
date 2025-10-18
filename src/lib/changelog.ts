@@ -11,6 +11,154 @@ export interface ChangelogEntry {
 
 export const changelog: ChangelogEntry[] = [
   {
+    version: "5.5.8",
+    date: "2025-10-16",
+    added: [
+    "🎬 新增视频源导入/导出功能：支持批量管理视频源配置，便于备份和迁移"
+    ],
+    changed: [
+    "🎨 优化VideoCard徽章布局和定位：改进视频卡片徽章的视觉效果和位置",
+    "📱 优化返回顶部按钮位置：调整按钮位置更贴近底部，提升移动端体验",
+    "⚡ 优化短剧分页分类UI闪烁问题：通过智能加载状态管理，切换分类时保持旧内容显示直到新内容加载完成，大幅减少UI闪烁"
+    ],
+    fixed: [
+    "🔧 修复片尾自动播放导致跳跃2集的问题：",
+    "添加冷却机制防止双集跳过",
+    "在SkipController添加episodeIndex prop修复剧集切换时的自动跳过",
+    "防止视频结束时保存播放进度以避免不正确的恢复位置",
+    "重置lastProcessedSegmentRef状态防止重复处理片段",
+    "添加详细调试日志协助排查匹配失败",
+    "优化剧集切换后的自动跳过重置机制",
+    "🎯 修复VideoCard装饰元素的悬停缩放和z-index同步问题",
+    "🔄 改进视频卡片装饰覆盖层的悬停效果同步",
+    "📐 优化视频卡片徽章和装饰覆盖层的z-index层级",
+    "🖱️ 修复VideoCard工具提示定位和布局问题",
+    "🔨 修复返回顶部按钮的定位和可见性问题",
+    "🎭 修复加载旋转器边框和工具提示显示问题",
+    "🐛 修复Docker工作流自动构建版本标签功能",
+    "🔍 修复merge job中版本检测总是变化的问题",
+    "🛠️ 为merge job版本检查添加调试输出"
+    ]
+  },
+  {
+    version: "5.5.7",
+    date: "2025-10-11",
+    added: [
+    "🎨 玻璃态渐变UI全面升级：为首页、侧边栏、视频卡片、播放页、短剧页面等应用玻璃态设计、渐变主题和流畅动画效果",
+    "🔐 TVBox用户专属Token系统：新增每个用户独立的TVBox token和视频源访问限制功能",
+    "📊 Docker自动版本标签：为CI/CD流水线添加自动版本检测功能，实现Docker镜像自动打标签"
+    ],
+    changed: [
+    "🎯 剧集选择器和视频源切换器UI增强：优化剧集选择器和视频源切换器的视觉效果，添加渐变和动画",
+    "🎬 播放页UI优化：为移动端和桌面端播放页面增强UI体验，添加渐变效果",
+    "📱 豆瓣页面筛选面板美化：优化豆瓣页面筛选面板和分页状态的视觉设计",
+    "🎭 短剧页面UI美化：为短剧页面应用渐变设计和动画效果",
+    "🛠️ 管理后台加载和空状态美化：优化管理页面的加载和空状态显示效果",
+    "📏 播放页返回顶部按钮位置调整：将返回顶部按钮移至右下角位置",
+    "🎯 VirtualDoubanGrid完成消息优化：改进Bangumi模式下的完成提示消息"
+    ],
+    fixed: [
+    "🔥 彻底修复片尾自动播放双集跳跃问题：通过多层防护机制完全解决片尾自动播放时跳2集的bug",
+    "添加`lastProcessedSegmentRef`防重复触发机制，确保同一片段只处理一次",
+    "添加`videoEndedHandledRef`防止同一video:ended事件被多个监听器重复处理",
+    "移除SkipController中的1秒延迟，避免延迟期间触发video:ended事件",
+    "延迟重置`isSkipControllerTriggeredRef`标志至2秒，适配短剧异步URL解析",
+    "🎭 剧集选择器标签页文字不可见问题：修复剧集选择器中标签页文本隐形的问题",
+    "🔄 跳过配置段落长度未定义错误：修复SkipController中segments.length未定义导致的错误",
+    "⚙️ 跳过设置对话框UX优化：新增多种关闭选项提升用户体验",
+    "🎯 切换集数时自动跳过设置重置问题：修复切换集数时跳过设置被重置的问题，确保用户设置持久化",
+    "📝 跨组件自动跳过设置同步：修复所有UI组件之间的自动跳过设置同步问题",
+    "🔁 用户设置跨集数和跨进度保持：修复用户跳过设置在seek和切换集数时的持久化问题",
+    "📊 番剧模式继续观看卡片集数显示：修复继续观看卡片的集数显示与播放统计页面保持一致"
+    ]
+  },
+  {
+    version: "5.5.6",
+    date: "2025-10-08",
+    added: [
+    "🎯 片头片尾跳过实时标记按钮：新增实时标记片头片尾时间点的交互按钮，方便用户快速配置跳过设置",
+    "🎮 可拖拽跳过配置悬浮窗：新增可拖拽的跳过配置悬浮窗组件，支持触摸操作和位置持久化存储",
+    "📱 移动端跳过设置按钮显示：修复移动端设备上跳过设置按钮的显示问题",
+    "🎬 片尾剩余时间模式跨集数支持：实现片尾跳过配置的剩余时间模式在切换集数时的正确处理",
+    "📊 继续观看卡片完结徽章：为所有继续观看部分添加已完结系列徽章显示",
+    "🔍 TVBox深度JAR诊断系统：新增JAR文件头验证的深度诊断系统和智能健康检查"
+    ],
+    changed: [
+    "📐 可拖拽跳过配置悬浮窗边界限制：优化悬浮窗拖拽边界限制和位置持久化机制",
+    "🎨 Zeabur部署指南简化：简化Zeabur部署指南为仅Docker镜像方式，移除复杂的GitHub集成部署",
+    "📝 Zeabur部署指南KVRocks配置更正：修正KVRocks持久化卷路径说明，从`/data`改为正确的`/var/lib/kvrocks/db`",
+    "🌐 Zeabur一键部署模板链接更新：更新README中的Zeabur一键部署模板链接",
+    "🏠 Zeabur部署完成后域名设置提醒：添加部署完成后需要设置访问域名的重要提示",
+    "📚 README锚点链接修复：修复设置访问域名部分的锚点链接"
+    ],
+    fixed: [
+    "🔧 original_episodes损坏和无限API请求防护：防止original_episodes数据损坏导致的无限API请求问题",
+    "🛡️ 剧集检测时自动original_episodes更新防护：防止剧集检测过程中original_episodes被自动更新",
+    "📝 剧集更新检测时original_episodes覆盖防护：防止剧集更新检测时original_episodes字段被意外覆盖",
+    "🎬 片尾跳过剩余时间模式跨集数修复：修复片尾跳过配置在剩余时间模式下切换集数时的处理逻辑（多次优化）",
+    "🔄 KVRocks跳过配置首次加载问题：修复KVRocks环境下跳过配置首次加载不生效的问题",
+    "📊 跳过配置架构重构：采用新的跳过配置架构设计，实现更稳定可靠的片头片尾跳过功能",
+    "🎯 观看更新卡片闪烁优化：通过排序updatedSeries防止继续观看卡片闪烁",
+    "🌐 Zeabur部署指南和演示站点更新：更新Zeabur部署指南内容并添加最新演示站点链接"
+    ]
+  },
+  {
+    version: "5.5.5",
+    date: "2025-10-06",
+    added: [
+    "🎯 TVBox诊断增强：新增完整诊断详情展示到用户页面和管理后台，包括基本信息、Spider状态、配置字段等",
+    "🔍 Spider管理系统：实现Spider探测、缓存、降级代理机制，支持多个Spider JAR备份源(gaotianliuyun作为第三备份源)",
+    "📊 管理统计卡片增强：新增新剧集卡片和继续观看卡片到管理员统计页面，优化布局显示",
+    "🎬 已完结系列徽章：基于vod_remarks添加已完结系列徽章功能，支持搜索API和详情API的remarks检测",
+    "📝 双语README和完整文档：新增CC BY-NC-SA 4.0协议声明、Vercel部署指南、Selene移动应用说明、重要声明章节",
+    "🔄 Spider状态API：新增Spider状态查询端点，增强TVBox诊断UI显示"
+    ],
+    changed: [
+    "⚡ Spider JAR优化：优先使用GitHub raw源以减少失败尝试，实现快速模式和本地代理降级",
+    "🔄 缓存机制优化：Kvrocks/Upstash使用内存缓存以解决慢加载问题，防止localStorage写入",
+    "🎯 原始集数逻辑改进：信任客户端提供的original_episodes，使用recordKey精确匹配source+id而非标题匹配",
+    "📊 搜索API优先级：优先使用搜索API的remarks而非详情API来判断完结状态",
+    "🌐 TVBox站点名称动态化：使用动态站点名称替代硬编码的LunaTV",
+    "📦 react-window升级至v2.2.0：升级虚拟滚动组件至最新版本",
+    "🎨 README优化：修复目录锚点链接，更新Docker配置说明，添加Selene移动应用章节"
+    ],
+    fixed: [
+    "🔧 original_episodes更新逻辑完善：自动修正无效的original_episodes值(大于total_episodes时)，当用户观看新剧集时更新，保留原始值不被覆盖",
+    "💾 缓存更新时序修复：在数据库更新成功后清除缓存而非之前，确保数据一致性",
+    "🔄 播放记录缓存刷新：当original_episodes更新时强制刷新播放记录和watching-updates缓存",
+    "📱 QuotaExceededError修复：watching-updates使用内存缓存解决localStorage配额超限问题",
+    "⚙️ ESLint规范修复：将siteExt改为const以修复prefer-const警告",
+    "🎯 实时数据同步：为Kvrocks存储模式确保实时数据同步，优化播放记录和watching-updates同步机制",
+    "🔍 强制刷新参数：为checkWatchingUpdates和UserMenu添加forceRefresh参数以绕过缓存",
+    "🗄️ 数据库original_episodes获取：总是从数据库获取新鲜的original_episodes数据，确保更新检测准确",
+    "🎭 TVBox配置问题：修复yingshicang模式下的硬编码spider jar问题，修复长URL溢出显示，优化TVBox页面布局",
+    "🔐 localStorage写入限制：防止saveUserCache在使用Kvrocks/Upstash时写入localStorage",
+    "📝 UserMenu存储类型初始化：优化存储类型初始化以防止冗余渲染"
+    ]
+  },
+  {
+    version: "5.5.4",
+    date: "2025-10-03",
+    added: [
+    "🔐 TVBox普通用户访问支持：新增/api/tvbox-config端点，允许所有登录用户访问TVBox配置",
+    "🎨 登录注册界面现代化：升级登录/注册页面，添加动态随机壁纸和现代化UI设计",
+    "💾 日历缓存数据库迁移：将日历缓存从localStorage迁移至数据库，支持跨设备同步"
+    ],
+    changed: [
+    "🎯 登录注册链接卡片化：将登录/注册链接升级为渐变按钮卡片样式",
+    "📊 前端数据库缓存优化：实现前端数据库缓存优化，提供即时加载体验",
+    "📦 react-window升级至v2.2.0：升级虚拟滚动组件至最新版本"
+    ],
+    fixed: [
+    "🔄 原始集数更新逻辑修复：修复新剧集追踪的original_episodes更新逻辑",
+    "🔁 重复播放记录问题：解决重复播放记录和错误original_episodes值的问题",
+    "🗄️ Upstash对象反序列化支持：修复日历缓存的Upstash对象反序列化问题",
+    "📝 自动更新检测original_episodes保留：防止auto-update检测时覆盖original_episodes字段",
+    "🔐 用户注册后Upstash主从同步等待：修复Upstash主从同步延迟问题",
+    "🚫 Next.js动态路由警告消除：为动态API路由添加force-dynamic声明，清理控制台警告"
+    ]
+  },
+  {
     version: "5.5.3",
     date: "2025-09-30",
     added: [

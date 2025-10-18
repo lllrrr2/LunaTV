@@ -58,7 +58,13 @@ export const UserMenu: React.FC = () => {
   const [isContinueWatchingOpen, setIsContinueWatchingOpen] = useState(false);
   const [isFavoritesOpen, setIsFavoritesOpen] = useState(false);
   const [authInfo, setAuthInfo] = useState<AuthInfo | null>(null);
-  const [storageType, setStorageType] = useState<string>('localstorage');
+  const [storageType, setStorageType] = useState<string>(() => {
+    // 🔧 优化：直接从 RUNTIME_CONFIG 读取初始值，避免默认值导致的多次渲染
+    if (typeof window !== 'undefined') {
+      return (window as any).RUNTIME_CONFIG?.STORAGE_TYPE || 'localstorage';
+    }
+    return 'localstorage';
+  });
   const [mounted, setMounted] = useState(false);
   const [watchingUpdates, setWatchingUpdates] = useState<WatchingUpdate | null>(null);
   const [playRecords, setPlayRecords] = useState<(PlayRecord & { key: string })[]>([]);
@@ -103,6 +109,9 @@ export const UserMenu: React.FC = () => {
   const [isDoubanDropdownOpen, setIsDoubanDropdownOpen] = useState(false);
   const [isDoubanImageProxyDropdownOpen, setIsDoubanImageProxyDropdownOpen] =
     useState(false);
+  // 跳过片头片尾相关设置
+  const [enableAutoSkip, setEnableAutoSkip] = useState(true);
+  const [enableAutoNextEpisode, setEnableAutoNextEpisode] = useState(true);
 
   // 豆瓣数据源选项
   const doubanDataSourceOptions = [
@@ -144,15 +153,11 @@ export const UserMenu: React.FC = () => {
     setMounted(true);
   }, []);
 
-  // 获取认证信息和存储类型
+  // 获取认证信息
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const auth = getAuthInfoFromBrowserCookie();
       setAuthInfo(auth);
-
-      const type =
-        (window as any).RUNTIME_CONFIG?.STORAGE_TYPE || 'localstorage';
-      setStorageType(type);
     }
   }, []);
 
@@ -240,6 +245,17 @@ export const UserMenu: React.FC = () => {
       if (savedEnableContinueWatchingFilter !== null) {
         setEnableContinueWatchingFilter(JSON.parse(savedEnableContinueWatchingFilter));
       }
+
+      // 读取跳过片头片尾设置（默认开启）
+      const savedEnableAutoSkip = localStorage.getItem('enableAutoSkip');
+      if (savedEnableAutoSkip !== null) {
+        setEnableAutoSkip(JSON.parse(savedEnableAutoSkip));
+      }
+
+      const savedEnableAutoNextEpisode = localStorage.getItem('enableAutoNextEpisode');
+      if (savedEnableAutoNextEpisode !== null) {
+        setEnableAutoNextEpisode(JSON.parse(savedEnableAutoNextEpisode));
+      }
     }
   }, []);
 
@@ -293,17 +309,9 @@ export const UserMenu: React.FC = () => {
       const forceInitialCheck = async () => {
         console.log('页面初始化，强制检查更新...');
         try {
-          // 暂时清除缓存时间，强制检查一次
-          const lastCheckTime = localStorage.getItem('moontv_last_update_check');
-          localStorage.removeItem('moontv_last_update_check');
-
-          // 执行检查
-          await checkWatchingUpdates();
-
-          // 恢复缓存时间（如果之前有的话）
-          if (lastCheckTime) {
-            localStorage.setItem('moontv_last_update_check', lastCheckTime);
-          }
+          // 🔧 修复：直接使用 forceRefresh=true，不再手动操作 localStorage
+          // 因为 kvrocks 模式使用内存缓存，删除 localStorage 无效
+          await checkWatchingUpdates(true);
 
           // 更新UI
           updateWatchingUpdates();
@@ -322,8 +330,10 @@ export const UserMenu: React.FC = () => {
         updateWatchingUpdates();
       }
 
-      // 无论是否有缓存，都强制检查一次以确保数据最新
-      forceInitialCheck();
+      // 🔧 修复：延迟1秒后在后台执行更新检查，避免阻塞页面初始加载
+      setTimeout(() => {
+        forceInitialCheck();
+      }, 1000);
 
       // 订阅更新事件
       const unsubscribe = subscribeToWatchingUpdatesEvent(() => {
@@ -750,6 +760,24 @@ export const UserMenu: React.FC = () => {
     }
   };
 
+  const handleEnableAutoSkipToggle = (value: boolean) => {
+    setEnableAutoSkip(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('enableAutoSkip', JSON.stringify(value));
+      // 🔑 通知 SkipController localStorage 已更新
+      window.dispatchEvent(new Event('localStorageChanged'));
+    }
+  };
+
+  const handleEnableAutoNextEpisodeToggle = (value: boolean) => {
+    setEnableAutoNextEpisode(value);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('enableAutoNextEpisode', JSON.stringify(value));
+      // 🔑 通知 SkipController localStorage 已更新
+      window.dispatchEvent(new Event('localStorageChanged'));
+    }
+  };
+
   const handleDoubanDataSourceChange = (value: string) => {
     setDoubanDataSource(value);
     if (typeof window !== 'undefined') {
@@ -813,6 +841,8 @@ export const UserMenu: React.FC = () => {
     setContinueWatchingMinProgress(5);
     setContinueWatchingMaxProgress(100);
     setEnableContinueWatchingFilter(false);
+    setEnableAutoSkip(true);
+    setEnableAutoNextEpisode(true);
 
     if (typeof window !== 'undefined') {
       localStorage.setItem('defaultAggregateSearch', JSON.stringify(true));
@@ -826,6 +856,8 @@ export const UserMenu: React.FC = () => {
       localStorage.setItem('continueWatchingMinProgress', '5');
       localStorage.setItem('continueWatchingMaxProgress', '100');
       localStorage.setItem('enableContinueWatchingFilter', JSON.stringify(false));
+      localStorage.setItem('enableAutoSkip', JSON.stringify(true));
+      localStorage.setItem('enableAutoNextEpisode', JSON.stringify(true));
     }
   };
 
@@ -1436,6 +1468,74 @@ export const UserMenu: React.FC = () => {
             {/* 分割线 */}
             <div className='border-t border-gray-200 dark:border-gray-700'></div>
 
+            {/* 跳过片头片尾设置 */}
+            <div className='space-y-4'>
+              <div>
+                <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                  跳过片头片尾设置
+                </h4>
+                <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                  控制播放器默认的片头片尾跳过行为
+                </p>
+              </div>
+
+              {/* 自动跳过开关 */}
+              <div className='flex items-center justify-between'>
+                <div>
+                  <h5 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                    启用自动跳过
+                  </h5>
+                  <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                    开启后将自动跳过片头片尾，关闭则显示手动跳过按钮
+                  </p>
+                </div>
+                <label className='flex items-center cursor-pointer'>
+                  <div className='relative'>
+                    <input
+                      type='checkbox'
+                      className='sr-only peer'
+                      checked={enableAutoSkip}
+                      onChange={(e) => handleEnableAutoSkipToggle(e.target.checked)}
+                    />
+                    <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                    <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
+                  </div>
+                </label>
+              </div>
+
+              {/* 自动播放下一集开关 */}
+              <div className='flex items-center justify-between'>
+                <div>
+                  <h5 className='text-sm font-medium text-gray-700 dark:text-gray-300'>
+                    片尾自动播放下一集
+                  </h5>
+                  <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                    开启后片尾结束时自动跳转到下一集
+                  </p>
+                </div>
+                <label className='flex items-center cursor-pointer'>
+                  <div className='relative'>
+                    <input
+                      type='checkbox'
+                      className='sr-only peer'
+                      checked={enableAutoNextEpisode}
+                      onChange={(e) => handleEnableAutoNextEpisodeToggle(e.target.checked)}
+                    />
+                    <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
+                    <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
+                  </div>
+                </label>
+              </div>
+
+              {/* 提示信息 */}
+              <div className='text-xs text-gray-500 dark:text-gray-400 bg-blue-50 dark:bg-blue-900/20 p-3 rounded-lg border border-blue-200 dark:border-blue-800'>
+                💡 这些设置会作为新视频的默认配置。对于已配置的视频，请在播放页面的"跳过设置"中单独调整。
+              </div>
+            </div>
+
+            {/* 分割线 */}
+            <div className='border-t border-gray-200 dark:border-gray-700'></div>
+
             {/* 继续观看筛选设置 */}
             <div className='space-y-4'>
               <div className='flex items-center justify-between'>
@@ -1741,22 +1841,24 @@ export const UserMenu: React.FC = () => {
                   {watchingUpdates.updatedSeries
                     .filter(series => series.hasNewEpisode)
                     .map((series, index) => (
-                      <div key={`new-${series.title}_${series.year}_${index}`} className='relative'>
-                        <VideoCard
-                          title={series.title}
-                          poster={series.cover}
-                          year={series.year}
-                          source={series.sourceKey}
-                          source_name={series.source_name}
-                          episodes={series.totalEpisodes}
-                          currentEpisode={series.currentEpisode}
-                          id={series.videoId}
-                          onDelete={undefined}
-                          type={series.totalEpisodes > 1 ? 'tv' : ''}
-                          from="playrecord"
-                        />
+                      <div key={`new-${series.title}_${series.year}_${index}`} className='relative group/card'>
+                        <div className='relative group-hover/card:z-[500] transition-all duration-300'>
+                          <VideoCard
+                            title={series.title}
+                            poster={series.cover}
+                            year={series.year}
+                            source={series.sourceKey}
+                            source_name={series.source_name}
+                            episodes={series.totalEpisodes}
+                            currentEpisode={series.currentEpisode}
+                            id={series.videoId}
+                            onDelete={undefined}
+                            type={series.totalEpisodes > 1 ? 'tv' : ''}
+                            from="playrecord"
+                          />
+                        </div>
                         {/* 新集数徽章 */}
-                        <div className='absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs px-2 py-1 rounded-full shadow-lg z-50'>
+                        <div className='absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs px-2 py-1 rounded-full shadow-lg z-[502]'>
                           +{series.newEpisodes}集
                         </div>
                       </div>
@@ -1821,24 +1923,27 @@ export const UserMenu: React.FC = () => {
               const { source, id } = parseKey(record.key);
               const newEpisodesCount = getNewEpisodesCount(record);
               return (
-                <div key={record.key} className='relative'>
-                  <VideoCard
-                    id={id}
-                    title={record.title}
-                    poster={record.cover}
-                    year={record.year}
-                    source={source}
-                    source_name={record.source_name}
-                    progress={getProgress(record)}
-                    episodes={record.total_episodes}
-                    currentEpisode={record.index}
-                    query={record.search_title}
-                    from='playrecord'
-                    type={record.total_episodes > 1 ? 'tv' : ''}
-                  />
+                <div key={record.key} className='relative group/card'>
+                  <div className='relative group-hover/card:z-[500] transition-all duration-300'>
+                    <VideoCard
+                      id={id}
+                      title={record.title}
+                      poster={record.cover}
+                      year={record.year}
+                      source={source}
+                      source_name={record.source_name}
+                      progress={getProgress(record)}
+                      episodes={record.total_episodes}
+                      currentEpisode={record.index}
+                      query={record.search_title}
+                      from='playrecord'
+                      type={record.total_episodes > 1 ? 'tv' : ''}
+                      remarks={record.remarks}
+                    />
+                  </div>
                   {/* 新集数徽章 */}
                   {newEpisodesCount > 0 && (
-                    <div className='absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs px-2 py-1 rounded-full shadow-lg z-50'>
+                    <div className='absolute -top-2 -right-2 bg-gradient-to-r from-red-500 to-pink-500 text-white text-xs px-2 py-1 rounded-full shadow-lg z-[502]'>
                       +{newEpisodesCount}集
                     </div>
                   )}
@@ -1988,14 +2093,17 @@ export const UserMenu: React.FC = () => {
       <div className='relative'>
         <button
           onClick={handleMenuClick}
-          className='w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:bg-gray-200/50 dark:text-gray-300 dark:hover:bg-gray-700/50 transition-colors'
+          className='relative w-10 h-10 p-2 rounded-full flex items-center justify-center text-gray-600 hover:text-blue-500 dark:text-gray-300 dark:hover:text-blue-400 transition-all duration-300 hover:scale-110 hover:shadow-lg hover:shadow-blue-500/30 dark:hover:shadow-blue-400/30 group'
           aria-label='User Menu'
         >
-          <User className='w-full h-full' />
+          {/* 微光背景效果 */}
+          <div className='absolute inset-0 rounded-full bg-gradient-to-br from-blue-400/0 to-purple-600/0 group-hover:from-blue-400/20 group-hover:to-purple-600/20 dark:group-hover:from-blue-300/20 dark:group-hover:to-purple-500/20 transition-all duration-300'></div>
+
+          <User className='w-full h-full relative z-10 group-hover:scale-110 transition-transform duration-300' />
         </button>
         {/* 统一更新提醒点：版本更新或剧集更新都显示橙色点 */}
         {((updateStatus === UpdateStatus.HAS_UPDATE) || (hasUnreadUpdates && totalUpdates > 0)) && (
-          <div className='absolute top-[2px] right-[2px] w-2 h-2 bg-yellow-500 rounded-full'></div>
+          <div className='absolute top-[2px] right-[2px] w-2 h-2 bg-yellow-500 rounded-full animate-pulse shadow-lg shadow-yellow-500/50'></div>
         )}
       </div>
 

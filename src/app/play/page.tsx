@@ -10,19 +10,17 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import EpisodeSelector from '@/components/EpisodeSelector';
 import NetDiskSearchResults from '@/components/NetDiskSearchResults';
 import PageLayout from '@/components/PageLayout';
+import SkipController, { SkipSettingsButton } from '@/components/SkipController';
 import artplayerPluginChromecast from '@/lib/artplayer-plugin-chromecast';
 import { ClientCache } from '@/lib/client-cache';
 import {
   deleteFavorite,
   deletePlayRecord,
-  deleteSkipConfig,
   generateStorageKey,
   getAllPlayRecords,
-  getSkipConfig,
   isFavorited,
   saveFavorite,
   savePlayRecord,
-  saveSkipConfig,
   subscribeToDataUpdates,
 } from '@/lib/db.client';
 import { getDoubanDetails } from '@/lib/douban.client';
@@ -79,29 +77,11 @@ function PlayPageClient() {
   const [netdiskError, setNetdiskError] = useState<string | null>(null);
   const [netdiskTotal, setNetdiskTotal] = useState(0);
 
-  // 跳过片头片尾配置
-  const [skipConfig, setSkipConfig] = useState<{
-    enable: boolean;
-    intro_time: number;
-    outro_time: number;
-  }>({
-    enable: false,
-    intro_time: 0,
-    outro_time: 0,
-  });
-  const skipConfigRef = useRef(skipConfig);
-  useEffect(() => {
-    skipConfigRef.current = skipConfig;
-  }, [
-    skipConfig,
-    skipConfig.enable,
-    skipConfig.intro_time,
-    skipConfig.outro_time,
-  ]);
+  // SkipController 相关状态
+  const [isSkipSettingOpen, setIsSkipSettingOpen] = useState(false);
+  const [currentPlayTime, setCurrentPlayTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
 
-  // 跳过检查的时间间隔控制
-  const lastSkipCheckRef = useRef(0);
-  
   // 进度条拖拽状态管理
   const isDraggingProgressRef = useRef(false);
   const seekResetTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -164,6 +144,10 @@ function PlayPageClient() {
   // 集数相关
   const [currentEpisodeIndex, setCurrentEpisodeIndex] = useState(0);
 
+  // 换源相关状态
+  const [availableSources, setAvailableSources] = useState<SearchResult[]>([]);
+  const availableSourcesRef = useRef<SearchResult[]>([]);
+
   const currentSourceRef = useRef(currentSource);
   const currentIdRef = useRef(currentId);
   const videoTitleRef = useRef(videoTitle);
@@ -181,6 +165,7 @@ function PlayPageClient() {
     videoTitleRef.current = videoTitle;
     videoYearRef.current = videoYear;
     videoDoubanIdRef.current = videoDoubanId;
+    availableSourcesRef.current = availableSources;
   }, [
     currentSource,
     currentId,
@@ -189,6 +174,7 @@ function PlayPageClient() {
     videoTitle,
     videoYear,
     videoDoubanId,
+    availableSources,
   ]);
 
   // 加载详情（豆瓣或bangumi）
@@ -258,8 +244,6 @@ function PlayPageClient() {
   // 上次使用的播放速率，默认 1.0
   const lastPlaybackRateRef = useRef<number>(1.0);
 
-  // 换源相关状态
-  const [availableSources, setAvailableSources] = useState<SearchResult[]>([]);
   const [sourceSearchLoading, setSourceSearchLoading] = useState(false);
   const [sourceSearchError, setSourceSearchError] = useState<string | null>(
     null
@@ -382,6 +366,8 @@ function PlayPageClient() {
   const danmuPluginStateRef = useRef<any>(null); // 保存弹幕插件状态
   const isSourceChangingRef = useRef<boolean>(false); // 标记是否正在换源
   const isEpisodeChangingRef = useRef<boolean>(false); // 标记是否正在切换集数
+  const isSkipControllerTriggeredRef = useRef<boolean>(false); // 标记是否通过 SkipController 触发了下一集
+  const videoEndedHandledRef = useRef<boolean>(false); // 🔥 标记当前视频的 video:ended 事件是否已经被处理过（防止多个监听器重复触发）
 
   // 🚀 新增：连续切换源防抖和资源管理
   const sourceSwitchTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -1210,88 +1196,6 @@ function PlayPageClient() {
     return filteredLines.join('\n');
   }
 
-  // 跳过片头片尾配置相关函数
-  const handleSkipConfigChange = async (newConfig: {
-    enable: boolean;
-    intro_time: number;
-    outro_time: number;
-  }) => {
-    if (!currentSourceRef.current || !currentIdRef.current) return;
-
-    try {
-      setSkipConfig(newConfig);
-      if (!newConfig.enable && !newConfig.intro_time && !newConfig.outro_time) {
-        await deleteSkipConfig(currentSourceRef.current, currentIdRef.current);
-        artPlayerRef.current.setting.update({
-          name: '跳过片头片尾',
-          html: '跳过片头片尾',
-          switch: skipConfigRef.current.enable,
-          onSwitch: function (item: any) {
-            const newConfig = {
-              ...skipConfigRef.current,
-              enable: !item.switch,
-            };
-            handleSkipConfigChange(newConfig);
-            return !item.switch;
-          },
-        });
-        artPlayerRef.current.setting.update({
-          name: '设置片头',
-          html: '设置片头',
-          icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="12" r="2" fill="#ffffff"/><path d="M9 12L17 12" stroke="#ffffff" stroke-width="2"/><path d="M17 6L17 18" stroke="#ffffff" stroke-width="2"/></svg>',
-          tooltip:
-            skipConfigRef.current.intro_time === 0
-              ? '设置片头时间'
-              : `${formatTime(skipConfigRef.current.intro_time)}`,
-          onClick: function () {
-            const currentTime = artPlayerRef.current?.currentTime || 0;
-            if (currentTime > 0) {
-              const newConfig = {
-                ...skipConfigRef.current,
-                intro_time: currentTime,
-              };
-              handleSkipConfigChange(newConfig);
-              return `${formatTime(currentTime)}`;
-            }
-          },
-        });
-        artPlayerRef.current.setting.update({
-          name: '设置片尾',
-          html: '设置片尾',
-          icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 6L7 18" stroke="#ffffff" stroke-width="2"/><path d="M7 12L15 12" stroke="#ffffff" stroke-width="2"/><circle cx="19" cy="12" r="2" fill="#ffffff"/></svg>',
-          tooltip:
-            skipConfigRef.current.outro_time >= 0
-              ? '设置片尾时间'
-              : `-${formatTime(-skipConfigRef.current.outro_time)}`,
-          onClick: function () {
-            const outroTime =
-              -(
-                artPlayerRef.current?.duration -
-                artPlayerRef.current?.currentTime
-              ) || 0;
-            if (outroTime < 0) {
-              const newConfig = {
-                ...skipConfigRef.current,
-                outro_time: outroTime,
-              };
-              handleSkipConfigChange(newConfig);
-              return `-${formatTime(-outroTime)}`;
-            }
-          },
-        });
-      } else {
-        await saveSkipConfig(
-          currentSourceRef.current,
-          currentIdRef.current,
-          newConfig
-        );
-      }
-      console.log('跳过片头片尾配置已保存:', newConfig);
-    } catch (err) {
-      console.error('保存跳过片头片尾配置失败:', err);
-    }
-  };
-
   const formatTime = (seconds: number): string => {
     if (seconds === 0) return '00:00';
 
@@ -1553,7 +1457,10 @@ function PlayPageClient() {
     // 🔥 标记正在切换集数（只在非换源时）
     if (!isSourceChangingRef.current) {
       isEpisodeChangingRef.current = true;
-      console.log('🔄 开始切换集数，标记为集数变化');
+      // 🔑 立即重置 SkipController 触发标志，允许新集数自动跳过片头片尾
+      isSkipControllerTriggeredRef.current = false;
+      videoEndedHandledRef.current = false;
+      console.log('🔄 开始切换集数，重置自动跳过标志');
     }
 
     updateVideoUrl(detail, currentEpisodeIndex);
@@ -1965,25 +1872,6 @@ function PlayPageClient() {
     initFromHistory();
   }, []);
 
-  // 跳过片头片尾配置处理
-  useEffect(() => {
-    // 仅在初次挂载时检查跳过片头片尾配置
-    const initSkipConfig = async () => {
-      if (!currentSource || !currentId) return;
-
-      try {
-        const config = await getSkipConfig(currentSource, currentId);
-        if (config) {
-          setSkipConfig(config);
-        }
-      } catch (err) {
-        console.error('读取跳过片头片尾配置失败:', err);
-      }
-    };
-
-    initSkipConfig();
-  }, []);
-
   // 🚀 优化的换源处理（防连续点击）
   const handleSourceChange = async (
     newSource: string,
@@ -2059,19 +1947,6 @@ function PlayPageClient() {
           console.log('已清除前一个播放记录');
         } catch (err) {
           console.error('清除播放记录失败:', err);
-        }
-      }
-
-      // 清除并设置下一个跳过片头片尾配置
-      if (currentSourceRef.current && currentIdRef.current) {
-        try {
-          await deleteSkipConfig(
-            currentSourceRef.current,
-            currentIdRef.current
-          );
-          await saveSkipConfig(newSource, newId, skipConfigRef.current);
-        } catch (err) {
-          console.error('清除跳过片头片尾配置失败:', err);
         }
       }
 
@@ -2252,9 +2127,15 @@ function PlayPageClient() {
     const d = detailRef.current;
     const idx = currentEpisodeIndexRef.current;
     if (d && d.episodes && idx < d.episodes.length - 1) {
-      if (artPlayerRef.current && !artPlayerRef.current.paused) {
-        saveCurrentPlayProgress();
-      }
+      // 🔥 关键修复：通过 SkipController 自动跳下一集时，不保存播放进度
+      // 因为此时的播放位置是片尾，用户并没有真正看到这个位置
+      // 如果保存了片尾的进度，下次"继续观看"会从片尾开始，导致进度错误
+      // if (artPlayerRef.current && !artPlayerRef.current.paused) {
+      //   saveCurrentPlayProgress();
+      // }
+
+      // 🔑 标记通过 SkipController 触发了下一集
+      isSkipControllerTriggeredRef.current = true;
       setCurrentEpisodeIndex(idx + 1);
     }
   };
@@ -2382,6 +2263,12 @@ function PlayPageClient() {
 
       const currentTotalEpisodes = detailRef.current?.episodes.length || 1;
 
+      // 尝试从换源列表中获取更准确的 remarks（搜索接口比详情接口更可能有 remarks）
+      const sourceFromList = availableSourcesRef.current?.find(
+        s => s.source === currentSourceRef.current && s.id === currentIdRef.current
+      );
+      const remarksToSave = sourceFromList?.remarks || detailRef.current?.remarks;
+
       await savePlayRecord(currentSourceRef.current, currentIdRef.current, {
         title: videoTitleRef.current,
         source_name: detailRef.current?.source_name || '',
@@ -2389,12 +2276,18 @@ function PlayPageClient() {
         cover: detailRef.current?.poster || '',
         index: currentEpisodeIndexRef.current + 1, // 转换为1基索引
         total_episodes: currentTotalEpisodes,
-        // 关键修复：设置原始集数，首次观看时使用当前集数，后续保持不变
-        original_episodes: existingRecord?.original_episodes || currentTotalEpisodes,
+        // 🔑 关键：不要在这里设置 original_episodes
+        // 让 savePlayRecord 自己处理：
+        // - 首次保存时会自动设置为 total_episodes
+        // - 后续保存时会从数据库读取并保持不变
+        // - 只有当用户看了新集数时才会更新
+        // 这样避免了播放器传入错误的 original_episodes（可能是更新后的值）
+        original_episodes: existingRecord?.original_episodes, // 只传递已有值，不自动填充
         play_time: Math.floor(currentTime),
         total_time: Math.floor(duration),
         save_time: Date.now(),
         search_title: searchTitle,
+        remarks: remarksToSave, // 优先使用搜索结果的 remarks，因为详情接口可能没有
       });
 
       lastSaveTimeRef.current = Date.now();
@@ -2633,8 +2526,10 @@ function PlayPageClient() {
 
             // 🔥 重置集数切换标识
             if (isEpisodeChange) {
+              // 🔑 关键修复：切换集数后显式重置播放时间为 0，确保片头自动跳过能触发
+              artPlayerRef.current.currentTime = 0;
+              console.log('🎯 集数切换完成，重置播放时间为 0');
               isEpisodeChangingRef.current = false;
-              console.log('🎯 集数切换完成，重置标识');
             }
           }
         }).catch((error: any) => {
@@ -2905,74 +2800,6 @@ function PlayPageClient() {
               item.tooltip = nextState ? '外部弹幕已开启' : '外部弹幕已关闭';
               
               return nextState; // 立即返回新状态
-            },
-          },
-          {
-            name: '跳过片头片尾',
-            html: '跳过片头片尾',
-            switch: skipConfigRef.current.enable,
-            onSwitch: function (item: any) {
-              const newConfig = {
-                ...skipConfigRef.current,
-                enable: !item.switch,
-              };
-              handleSkipConfigChange(newConfig);
-              return !item.switch;
-            },
-          },
-          {
-            html: '删除跳过配置',
-            onClick: function () {
-              handleSkipConfigChange({
-                enable: false,
-                intro_time: 0,
-                outro_time: 0,
-              });
-              return '';
-            },
-          },
-          {
-            name: '设置片头',
-            html: '设置片头',
-            icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><circle cx="5" cy="12" r="2" fill="#ffffff"/><path d="M9 12L17 12" stroke="#ffffff" stroke-width="2"/><path d="M17 6L17 18" stroke="#ffffff" stroke-width="2"/></svg>',
-            tooltip:
-              skipConfigRef.current.intro_time === 0
-                ? '设置片头时间'
-                : `${formatTime(skipConfigRef.current.intro_time)}`,
-            onClick: function () {
-              const currentTime = artPlayerRef.current?.currentTime || 0;
-              if (currentTime > 0) {
-                const newConfig = {
-                  ...skipConfigRef.current,
-                  intro_time: currentTime,
-                };
-                handleSkipConfigChange(newConfig);
-                return `${formatTime(currentTime)}`;
-              }
-            },
-          },
-          {
-            name: '设置片尾',
-            html: '设置片尾',
-            icon: '<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M7 6L7 18" stroke="#ffffff" stroke-width="2"/><path d="M7 12L15 12" stroke="#ffffff" stroke-width="2"/><circle cx="19" cy="12" r="2" fill="#ffffff"/></svg>',
-            tooltip:
-              skipConfigRef.current.outro_time >= 0
-                ? '设置片尾时间'
-                : `-${formatTime(-skipConfigRef.current.outro_time)}`,
-            onClick: function () {
-              const outroTime =
-                -(
-                  artPlayerRef.current?.duration -
-                  artPlayerRef.current?.currentTime
-                ) || 0;
-              if (outroTime < 0) {
-                const newConfig = {
-                  ...skipConfigRef.current,
-                  outro_time: outroTime,
-                };
-                handleSkipConfigChange(newConfig);
-                return `-${formatTime(-outroTime)}`;
-              }
             },
           },
         ],
@@ -3688,7 +3515,15 @@ function PlayPageClient() {
 
       artPlayerRef.current.on('pause', () => {
         releaseWakeLock();
-        saveCurrentPlayProgress();
+        // 🔥 关键修复：暂停时也检查是否在片尾，避免保存错误的进度
+        const currentTime = artPlayerRef.current?.currentTime || 0;
+        const duration = artPlayerRef.current?.duration || 0;
+        const remainingTime = duration - currentTime;
+        const isNearEnd = duration > 0 && remainingTime < 180; // 最后3分钟
+
+        if (!isNearEnd) {
+          saveCurrentPlayProgress();
+        }
       });
 
       artPlayerRef.current.on('video:ended', () => {
@@ -3709,6 +3544,9 @@ function PlayPageClient() {
 
       // 监听视频可播放事件，这时恢复播放进度更可靠
       artPlayerRef.current.on('video:canplay', () => {
+        // 🔥 重置 video:ended 处理标志，因为这是新视频
+        videoEndedHandledRef.current = false;
+
         // 若存在需要恢复的播放进度，则跳转
         if (resumeTimeRef.current && resumeTimeRef.current > 0) {
           try {
@@ -3850,9 +3688,26 @@ function PlayPageClient() {
 
       // 监听视频播放结束事件，自动播放下一集
       artPlayerRef.current.on('video:ended', () => {
-        const d = detailRef.current;
         const idx = currentEpisodeIndexRef.current;
+
+        // 🔥 关键修复：首先检查这个 video:ended 事件是否已经被处理过
+        if (videoEndedHandledRef.current) {
+          return;
+        }
+
+        // 🔑 检查是否已经通过 SkipController 触发了下一集，避免重复触发
+        if (isSkipControllerTriggeredRef.current) {
+          videoEndedHandledRef.current = true;
+          // 🔥 关键修复：延迟重置标志，等待新集数开始加载
+          setTimeout(() => {
+            isSkipControllerTriggeredRef.current = false;
+          }, 2000);
+          return;
+        }
+
+        const d = detailRef.current;
         if (d && d.episodes && idx < d.episodes.length - 1) {
+          videoEndedHandledRef.current = true;
           setTimeout(() => {
             setCurrentEpisodeIndex(idx + 1);
           }, 1000);
@@ -3865,60 +3720,36 @@ function PlayPageClient() {
         const duration = artPlayerRef.current.duration || 0;
         const now = performance.now(); // 使用performance.now()更精确
 
-        // 跳过片头片尾逻辑 - 优化频率控制
-        if (skipConfigRef.current.enable) {
-          const SKIP_CHECK_INTERVAL = 1000; // 降低到1秒，提高响应性
-          
-          if (now - lastSkipCheckRef.current >= SKIP_CHECK_INTERVAL) {
-            lastSkipCheckRef.current = now;
-
-            // 跳过片头
-            if (
-              skipConfigRef.current.intro_time > 0 &&
-              currentTime < skipConfigRef.current.intro_time
-            ) {
-              artPlayerRef.current.currentTime = skipConfigRef.current.intro_time;
-              artPlayerRef.current.notice.show = `已跳过片头 (${formatTime(
-                skipConfigRef.current.intro_time
-              )})`;
-              return; // 避免执行后续逻辑
-            }
-
-            // 跳过片尾
-            if (
-              skipConfigRef.current.outro_time < 0 &&
-              duration > 0 &&
-              currentTime > duration + skipConfigRef.current.outro_time
-            ) {
-              if (
-                currentEpisodeIndexRef.current <
-                (detailRef.current?.episodes?.length || 1) - 1
-              ) {
-                handleNextEpisode();
-              } else {
-                artPlayerRef.current.pause();
-              }
-              artPlayerRef.current.notice.show = `已跳过片尾 (${formatTime(
-                skipConfigRef.current.outro_time
-              )})`;
-              return; // 避免执行后续逻辑
-            }
-          }
-        }
+        // 更新 SkipController 所需的时间信息
+        setCurrentPlayTime(currentTime);
+        setVideoDuration(duration);
 
         // 保存播放进度逻辑 - 优化所有存储类型的保存间隔
         const saveNow = Date.now();
         // upstash需要更长间隔避免频率限制，其他存储类型也适当降低频率减少性能开销
         const interval = process.env.NEXT_PUBLIC_STORAGE_TYPE === 'upstash' ? 20000 : 10000; // 统一提高到10秒
-        
-        if (saveNow - lastSaveTimeRef.current > interval) {
+
+        // 🔥 关键修复：如果当前播放位置接近视频结尾（最后3分钟），不保存进度
+        // 这是为了避免自动跳过片尾时保存了片尾位置的进度，导致"继续观看"从错误位置开始
+        const remainingTime = duration - currentTime;
+        const isNearEnd = duration > 0 && remainingTime < 180; // 最后3分钟
+
+        if (saveNow - lastSaveTimeRef.current > interval && !isNearEnd) {
           saveCurrentPlayProgress();
           lastSaveTimeRef.current = saveNow;
         }
       });
 
       artPlayerRef.current.on('pause', () => {
-        saveCurrentPlayProgress();
+        // 🔥 关键修复：暂停时也检查是否在片尾，避免保存错误的进度
+        const currentTime = artPlayerRef.current?.currentTime || 0;
+        const duration = artPlayerRef.current?.duration || 0;
+        const remainingTime = duration - currentTime;
+        const isNearEnd = duration > 0 && remainingTime < 180; // 最后3分钟
+
+        if (!isNearEnd) {
+          saveCurrentPlayProgress();
+        }
       });
 
       if (artPlayerRef.current?.video) {
@@ -4208,13 +4039,14 @@ function PlayPageClient() {
         </div>
         {/* 第二行：播放器和选集 */}
         <div className='space-y-2'>
-          {/* 折叠控制 - 仅在 lg 及以上屏幕显示 */}
-          <div className='hidden lg:flex justify-end'>
+          {/* 折叠控制 */}
+          <div className='flex justify-end items-center'>
+            {/* 折叠控制按钮 - 仅在 lg 及以上屏幕显示 */}
             <button
               onClick={() =>
                 setIsEpisodeSelectorCollapsed(!isEpisodeSelectorCollapsed)
               }
-              className='group relative flex items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
+              className='hidden lg:flex group relative items-center space-x-1.5 px-3 py-1.5 rounded-full bg-white/80 hover:bg-white dark:bg-gray-800/80 dark:hover:bg-gray-800 backdrop-blur-sm border border-gray-200/50 dark:border-gray-700/50 shadow-sm hover:shadow-md transition-all duration-200'
               title={
                 isEpisodeSelectorCollapsed ? '显示选集面板' : '隐藏选集面板'
               }
@@ -4263,6 +4095,54 @@ function PlayPageClient() {
                   ref={artRef}
                   className='bg-black w-full h-full rounded-xl overflow-hidden shadow-lg'
                 ></div>
+
+                {/* 跳过设置按钮 - 播放器内右上角 */}
+                {currentSource && currentId && (
+                  <div className='absolute top-4 right-4 z-10'>
+                    <button
+                      onClick={() => setIsSkipSettingOpen(true)}
+                      className='group flex items-center gap-2 px-4 py-2 bg-white/10 hover:bg-white/20 backdrop-blur-xl rounded-xl border border-white/30 hover:border-white/50 shadow-[0_8px_32px_0_rgba(0,0,0,0.37)] hover:shadow-[0_8px_32px_0_rgba(255,255,255,0.18)] hover:scale-105 transition-all duration-300 ease-out'
+                      title='跳过设置'
+                      style={{
+                        backdropFilter: 'blur(20px) saturate(180%)',
+                        WebkitBackdropFilter: 'blur(20px) saturate(180%)',
+                      }}
+                    >
+                      <svg
+                        className='w-5 h-5 text-white drop-shadow-lg group-hover:rotate-90 transition-all duration-300'
+                        fill='none'
+                        stroke='currentColor'
+                        viewBox='0 0 24 24'
+                      >
+                        <path
+                          strokeLinecap='round'
+                          strokeLinejoin='round'
+                          strokeWidth={2}
+                          d='M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4'
+                        />
+                      </svg>
+                      <span className='text-sm font-medium text-white drop-shadow-lg transition-all duration-300 hidden sm:inline'>
+                        跳过设置
+                      </span>
+                    </button>
+                  </div>
+                )}
+
+                {/* SkipController 组件 */}
+                {currentSource && currentId && detail?.title && (
+                  <SkipController
+                    source={currentSource}
+                    id={currentId}
+                    title={detail.title}
+                    episodeIndex={currentEpisodeIndex}
+                    artPlayerRef={artPlayerRef}
+                    currentTime={currentPlayTime}
+                    duration={videoDuration}
+                    isSettingMode={isSkipSettingOpen}
+                    onSettingModeChange={setIsSkipSettingOpen}
+                    onNextEpisode={handleNextEpisode}
+                  />
+                )}
 
                 {/* 换源加载蒙层 */}
                 {isVideoLoading && (
@@ -4335,51 +4215,62 @@ function PlayPageClient() {
           <div className='md:col-span-3'>
             <div className='p-6 flex flex-col min-h-0'>
               {/* 标题 */}
-              <h1 className='text-3xl font-bold mb-2 tracking-wide flex items-center flex-shrink-0 text-center md:text-left w-full'>
-                {videoTitle || '影片标题'}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleToggleFavorite();
-                  }}
-                  className='ml-3 flex-shrink-0 hover:opacity-80 transition-opacity'
-                >
-                  <FavoriteIcon filled={favorited} />
-                </button>
-                
-                {/* 网盘资源提示按钮 */}
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    // 触发网盘搜索（如果还没搜索过）
-                    if (!netdiskResults && !netdiskLoading && videoTitle) {
-                      handleNetDiskSearch(videoTitle);
-                    }
-                    // 滚动到网盘区域
-                    setTimeout(() => {
-                      const element = document.getElementById('netdisk-section');
-                      if (element) {
-                        element.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                      }
-                    }, 100);
-                  }}
-                  className='ml-3 flex-shrink-0 hover:opacity-90 transition-all duration-200 hover:scale-105'
-                >
-                  <div className='flex items-center gap-1.5 bg-blue-500 hover:bg-blue-600 text-white px-3 py-1.5 rounded-full text-sm font-medium shadow-md'>
-                    📁
-                    {netdiskLoading ? (
-                      <span className='flex items-center gap-1'>
-                        <span className='inline-block h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin'></span>
-                        搜索中...
-                      </span>
-                    ) : netdiskTotal > 0 ? (
-                      <span>{netdiskTotal}个网盘资源</span>
-                    ) : (
-                      <span>网盘资源</span>
-                    )}
+              <div className='mb-4 flex-shrink-0'>
+                <div className='flex flex-col md:flex-row md:items-center gap-3'>
+                  <h1 className='text-2xl md:text-3xl font-bold tracking-wide text-center md:text-left bg-gradient-to-r from-gray-900 via-gray-800 to-gray-900 dark:from-gray-100 dark:via-gray-200 dark:to-gray-100 bg-clip-text text-transparent'>
+                    {videoTitle || '影片标题'}
+                  </h1>
+
+                  {/* 按钮组 */}
+                  <div className='flex items-center justify-center md:justify-start gap-2 flex-wrap'>
+                    {/* 收藏按钮 */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleToggleFavorite();
+                      }}
+                      className='group relative flex-shrink-0 transition-all duration-300 hover:scale-110'
+                    >
+                      <div className='absolute inset-0 bg-gradient-to-r from-red-400 to-pink-400 rounded-full opacity-0 group-hover:opacity-20 blur-lg transition-opacity duration-300'></div>
+                      <FavoriteIcon filled={favorited} />
+                    </button>
+
+                    {/* 网盘资源按钮 */}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        // 触发网盘搜索（如果还没搜索过）
+                        if (!netdiskResults && !netdiskLoading && videoTitle) {
+                          handleNetDiskSearch(videoTitle);
+                        }
+                        // 滚动到网盘区域
+                        setTimeout(() => {
+                          const element = document.getElementById('netdisk-section');
+                          if (element) {
+                            element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                          }
+                        }, 100);
+                      }}
+                      className='group relative flex-shrink-0 transition-all duration-300 hover:scale-105'
+                    >
+                      <div className='absolute inset-0 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full opacity-0 group-hover:opacity-30 blur-xl transition-opacity duration-300'></div>
+                      <div className='relative flex items-center gap-1.5 bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-3 py-1.5 rounded-full text-sm font-medium shadow-lg hover:shadow-xl transition-all duration-300'>
+                        📁
+                        {netdiskLoading ? (
+                          <span className='flex items-center gap-1'>
+                            <span className='inline-block h-3 w-3 border-2 border-white border-t-transparent rounded-full animate-spin'></span>
+                            搜索中...
+                          </span>
+                        ) : netdiskTotal > 0 ? (
+                          <span>{netdiskTotal}个资源</span>
+                        ) : (
+                          <span>网盘资源</span>
+                        )}
+                      </div>
+                    </button>
                   </div>
-                </button>
-              </h1>
+                </div>
+              </div>
 
               {/* 关键信息行 */}
               <div className='flex flex-wrap items-center gap-3 text-base mb-4 opacity-80 flex-shrink-0'>
@@ -4417,21 +4308,22 @@ function PlayPageClient() {
                       {bangumiDetails.rating?.score && parseFloat(bangumiDetails.rating.score) > 0 && (
                         <div className='flex items-center gap-2'>
                           <span className='font-semibold text-gray-700 dark:text-gray-300'>Bangumi评分: </span>
-                          <div className='flex items-center'>
-                            <span className='text-yellow-600 dark:text-yellow-400 font-bold text-base'>
+                          <div className='flex items-center group'>
+                            <span className='relative text-transparent bg-clip-text bg-gradient-to-r from-pink-600 via-rose-600 to-pink-600 dark:from-pink-400 dark:via-rose-400 dark:to-pink-400 font-bold text-lg transition-all duration-300 group-hover:scale-110 group-hover:drop-shadow-[0_2px_8px_rgba(236,72,153,0.5)]'>
                               {bangumiDetails.rating.score}
                             </span>
-                            <div className='flex ml-1'>
+                            <div className='flex ml-2 gap-0.5'>
                               {[...Array(5)].map((_, i) => (
                                 <svg
                                   key={i}
-                                  className={`w-3 h-3 ${
+                                  className={`w-4 h-4 transition-all duration-300 ${
                                     i < Math.floor(parseFloat(bangumiDetails.rating.score) / 2)
-                                      ? 'text-yellow-500'
+                                      ? 'text-pink-500 drop-shadow-[0_0_4px_rgba(236,72,153,0.5)] group-hover:scale-110'
                                       : 'text-gray-300 dark:text-gray-600'
                                   }`}
                                   fill='currentColor'
                                   viewBox='0 0 20 20'
+                                  style={{ transitionDelay: `${i * 50}ms` }}
                                 >
                                   <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
                                 </svg>
@@ -4475,13 +4367,15 @@ function PlayPageClient() {
                       {/* 标签信息 */}
                       <div className='flex flex-wrap gap-2 mt-3'>
                         {bangumiDetails.tags && bangumiDetails.tags.slice(0, 4).map((tag: any, index: number) => (
-                          <span key={index} className='bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full text-xs'>
-                            {tag.name}
+                          <span key={index} className='relative group bg-gradient-to-r from-blue-500/90 to-indigo-500/90 dark:from-blue-600/90 dark:to-indigo-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-blue-400 to-indigo-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>{tag.name}</span>
                           </span>
                         ))}
                         {bangumiDetails.total_episodes && (
-                          <span className='bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs'>
-                            共{bangumiDetails.total_episodes}话
+                          <span className='relative group bg-gradient-to-r from-green-500/90 to-emerald-500/90 dark:from-green-600/90 dark:to-emerald-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-green-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>共{bangumiDetails.total_episodes}话</span>
                           </span>
                         )}
                       </div>
@@ -4495,21 +4389,22 @@ function PlayPageClient() {
                       {movieDetails.rate && movieDetails.rate !== "0" && parseFloat(movieDetails.rate) > 0 && (
                         <div className='flex items-center gap-2'>
                           <span className='font-semibold text-gray-700 dark:text-gray-300'>豆瓣评分: </span>
-                          <div className='flex items-center'>
-                            <span className='text-yellow-600 dark:text-yellow-400 font-bold text-base'>
+                          <div className='flex items-center group'>
+                            <span className='relative text-transparent bg-clip-text bg-gradient-to-r from-yellow-600 via-amber-600 to-yellow-600 dark:from-yellow-400 dark:via-amber-400 dark:to-yellow-400 font-bold text-lg transition-all duration-300 group-hover:scale-110 group-hover:drop-shadow-[0_2px_8px_rgba(251,191,36,0.5)]'>
                               {movieDetails.rate}
                             </span>
-                            <div className='flex ml-1'>
+                            <div className='flex ml-2 gap-0.5'>
                               {[...Array(5)].map((_, i) => (
                                 <svg
                                   key={i}
-                                  className={`w-3 h-3 ${
+                                  className={`w-4 h-4 transition-all duration-300 ${
                                     i < Math.floor(parseFloat(movieDetails.rate) / 2)
-                                      ? 'text-yellow-500'
+                                      ? 'text-yellow-500 drop-shadow-[0_0_4px_rgba(234,179,8,0.5)] group-hover:scale-110'
                                       : 'text-gray-300 dark:text-gray-600'
                                   }`}
                                   fill='currentColor'
                                   viewBox='0 0 20 20'
+                                  style={{ transitionDelay: `${i * 50}ms` }}
                                 >
                                   <path d='M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z' />
                                 </svg>
@@ -4564,28 +4459,33 @@ function PlayPageClient() {
                       {/* 标签信息 */}
                       <div className='flex flex-wrap gap-2 mt-3'>
                         {movieDetails.countries && movieDetails.countries.slice(0, 2).map((country: string, index: number) => (
-                          <span key={index} className='bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full text-xs'>
-                            {country}
+                          <span key={index} className='relative group bg-gradient-to-r from-blue-500/90 to-cyan-500/90 dark:from-blue-600/90 dark:to-cyan-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-blue-400 to-cyan-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>{country}</span>
                           </span>
                         ))}
                         {movieDetails.languages && movieDetails.languages.slice(0, 2).map((language: string, index: number) => (
-                          <span key={index} className='bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 px-2 py-1 rounded-full text-xs'>
-                            {language}
+                          <span key={index} className='relative group bg-gradient-to-r from-purple-500/90 to-pink-500/90 dark:from-purple-600/90 dark:to-pink-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>{language}</span>
                           </span>
                         ))}
                         {movieDetails.episodes && (
-                          <span className='bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs'>
-                            共{movieDetails.episodes}集
+                          <span className='relative group bg-gradient-to-r from-green-500/90 to-emerald-500/90 dark:from-green-600/90 dark:to-emerald-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-green-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>共{movieDetails.episodes}集</span>
                           </span>
                         )}
                         {movieDetails.episode_length && (
-                          <span className='bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 px-2 py-1 rounded-full text-xs'>
-                            单集{movieDetails.episode_length}分钟
+                          <span className='relative group bg-gradient-to-r from-orange-500/90 to-amber-500/90 dark:from-orange-600/90 dark:to-amber-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-orange-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-orange-400 to-amber-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>单集{movieDetails.episode_length}分钟</span>
                           </span>
                         )}
                         {movieDetails.movie_duration && (
-                          <span className='bg-red-200 dark:bg-red-800 text-red-800 dark:text-red-200 px-2 py-1 rounded-full text-xs'>
-                            {movieDetails.movie_duration}分钟
+                          <span className='relative group bg-gradient-to-r from-red-500/90 to-rose-500/90 dark:from-red-600/90 dark:to-rose-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-red-500/30 transition-all duration-300 hover:scale-105'>
+                            <span className='absolute inset-0 bg-gradient-to-r from-red-400 to-rose-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                            <span className='relative'>{movieDetails.movie_duration}分钟</span>
                           </span>
                         )}
                       </div>
@@ -4601,14 +4501,17 @@ function PlayPageClient() {
                     {/* 集数信息 */}
                     {detail?.episodes && detail.episodes.length > 0 && (
                       <div className='flex flex-wrap gap-2'>
-                        <span className='bg-blue-200 dark:bg-blue-800 text-blue-800 dark:text-blue-200 px-2 py-1 rounded-full text-xs'>
-                          共{detail.episodes.length}集
+                        <span className='relative group bg-gradient-to-r from-blue-500/90 to-indigo-500/90 dark:from-blue-600/90 dark:to-indigo-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-blue-500/30 transition-all duration-300 hover:scale-105'>
+                          <span className='absolute inset-0 bg-gradient-to-r from-blue-400 to-indigo-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                          <span className='relative'>共{detail.episodes.length}集</span>
                         </span>
-                        <span className='bg-green-200 dark:bg-green-800 text-green-800 dark:text-green-200 px-2 py-1 rounded-full text-xs'>
-                          短剧
+                        <span className='relative group bg-gradient-to-r from-green-500/90 to-emerald-500/90 dark:from-green-600/90 dark:to-emerald-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-green-500/30 transition-all duration-300 hover:scale-105'>
+                          <span className='absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                          <span className='relative'>短剧</span>
                         </span>
-                        <span className='bg-purple-200 dark:bg-purple-800 text-purple-800 dark:text-purple-200 px-2 py-1 rounded-full text-xs'>
-                          {detail.year}年
+                        <span className='relative group bg-gradient-to-r from-purple-500/90 to-pink-500/90 dark:from-purple-600/90 dark:to-pink-600/90 text-white px-3 py-1 rounded-full text-xs font-medium shadow-md hover:shadow-lg hover:shadow-purple-500/30 transition-all duration-300 hover:scale-105'>
+                          <span className='absolute inset-0 bg-gradient-to-r from-purple-400 to-pink-400 rounded-full opacity-0 group-hover:opacity-20 blur transition-opacity duration-300'></span>
+                          <span className='relative'>{detail.year}年</span>
                         </span>
                       </div>
                     )}
@@ -4669,37 +4572,52 @@ function PlayPageClient() {
           {/* 封面展示 */}
           <div className='hidden md:block md:col-span-1 md:order-first'>
             <div className='pl-0 py-4 pr-6'>
-              <div className='relative bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden'>
+              <div className='group relative bg-gray-300 dark:bg-gray-700 aspect-[2/3] flex items-center justify-center rounded-xl overflow-hidden shadow-lg hover:shadow-2xl transition-all duration-500 hover:scale-[1.02]'>
                 {(videoCover || bangumiDetails?.images?.large) ? (
                   <>
+                    {/* 渐变光泽动画层 */}
+                    <div
+                      className='absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none z-10'
+                      style={{
+                        background: 'linear-gradient(110deg, transparent 30%, rgba(255,255,255,0.15) 45%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0.15) 55%, transparent 70%)',
+                        backgroundSize: '200% 100%',
+                        animation: 'shimmer 2.5s ease-in-out infinite',
+                      }}
+                    />
+
                     <img
                       src={processImageUrl(bangumiDetails?.images?.large || videoCover)}
                       alt={videoTitle}
-                      className='w-full h-full object-cover'
+                      className='w-full h-full object-cover transition-transform duration-500 group-hover:scale-105'
                     />
+
+                    {/* 悬浮遮罩 */}
+                    <div className='absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500'></div>
 
                     {/* 链接按钮（bangumi或豆瓣） */}
                     {videoDoubanId !== 0 && (
                       <a
                         href={
-                          bangumiDetails 
+                          bangumiDetails
                             ? `https://bgm.tv/subject/${videoDoubanId.toString()}`
                             : `https://movie.douban.com/subject/${videoDoubanId.toString()}`
                         }
                         target='_blank'
                         rel='noopener noreferrer'
-                        className='absolute top-3 left-3'
+                        className='absolute top-3 left-3 z-20'
                       >
-                        <div className={`${bangumiDetails ? 'bg-pink-500 hover:bg-pink-600' : 'bg-green-500 hover:bg-green-600'} text-white text-xs font-bold w-8 h-8 rounded-full flex items-center justify-center shadow-md hover:scale-[1.1] transition-all duration-300 ease-out`}>
+                        <div className={`relative ${bangumiDetails ? 'bg-gradient-to-r from-pink-500 to-rose-500 hover:from-pink-600 hover:to-rose-600' : 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600'} text-white text-xs font-bold w-10 h-10 rounded-full flex items-center justify-center shadow-lg hover:shadow-xl transition-all duration-300 ease-out hover:scale-110 group/link`}>
+                          <div className={`absolute inset-0 ${bangumiDetails ? 'bg-pink-400' : 'bg-green-400'} rounded-full opacity-0 group-hover/link:opacity-30 blur transition-opacity duration-300`}></div>
                           <svg
-                            width='16'
-                            height='16'
+                            width='18'
+                            height='18'
                             viewBox='0 0 24 24'
                             fill='none'
                             stroke='currentColor'
                             strokeWidth='2'
                             strokeLinecap='round'
                             strokeLinejoin='round'
+                            className='relative z-10'
                           >
                             <path d='M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71'></path>
                             <path d='M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71'></path>
@@ -4722,14 +4640,24 @@ function PlayPageClient() {
       {/* 返回顶部悬浮按钮 */}
       <button
         onClick={scrollToTop}
-        className={`fixed bottom-20 md:bottom-6 right-6 z-[500] w-12 h-12 bg-green-500/90 hover:bg-green-500 text-white rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group ${
+        className={`fixed bottom-6 right-6 z-[500] w-12 h-12 rounded-full shadow-lg backdrop-blur-sm transition-all duration-300 ease-in-out flex items-center justify-center group relative overflow-hidden ${
           showBackToTop
             ? 'opacity-100 translate-y-0 pointer-events-auto'
             : 'opacity-0 translate-y-4 pointer-events-none'
         }`}
+        style={{ position: 'fixed', right: '1.5rem', bottom: '1.5rem', left: 'auto' }}
         aria-label='返回顶部'
       >
-        <ChevronUp className='w-6 h-6 transition-transform group-hover:scale-110' />
+        {/* 渐变背景 */}
+        <div className='absolute inset-0 bg-gradient-to-r from-green-500 via-emerald-500 to-teal-500 group-hover:from-green-600 group-hover:via-emerald-600 group-hover:to-teal-600 transition-all duration-300'></div>
+
+        {/* 发光效果 */}
+        <div className='absolute inset-0 bg-gradient-to-r from-green-400 to-emerald-400 opacity-0 group-hover:opacity-50 blur-md transition-all duration-300'></div>
+
+        {/* 脉冲光环 */}
+        <div className='absolute inset-0 rounded-full border-2 border-white/30 animate-ping group-hover:opacity-0 transition-opacity duration-300'></div>
+
+        <ChevronUp className='w-6 h-6 text-white relative z-10 transition-all duration-300 group-hover:scale-110 group-hover:-translate-y-1' />
       </button>
     </PageLayout>
   );
